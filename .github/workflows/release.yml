@@ -1,121 +1,116 @@
+release:
+  name: Publish release
+  needs: build
+  runs-on: ubuntu-latest
 
-name: Release
+  steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
 
-on:
-  workflow_dispatch:
-    inputs:
-      version:
-        description: "Release version (e.g. 1.0.0)"
-        required: true
-        type: string
-      prerelease:
-        description: "Pre-release"
-        required: true
-        type: boolean
-        default: false
+    - name: Validate version
+      env:
+        GH_TOKEN: ${{ github.token }}
+        VERSION: ${{ inputs.version }}
+      shell: bash
+      run: |
+        if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+          echo "::error::Invalid version: $VERSION"
+          exit 1
+        fi
 
-permissions:
-  contents: write
-  actions: write
+        if gh release view "$VERSION" >/dev/null 2>&1; then
+          echo "::error::Release $VERSION already exists"
+          exit 1
+        fi
 
-jobs:
-  build:
-    name: Build all platforms
-    uses: ./.github/workflows/ci.yml
-    with:
-      self_contained: true
-      build_arm: true
-      build_windows: true
-      build_linux: true
-      build_osx: true
-      publish_ready_to_run: true
-      hide_pdb: true
+    - name: Download Launcher-All
+      uses: actions/download-artifact@v4
+      with:
+        name: Launcher-All
+        path: artifacts
 
-  release:
-    name: Publish release
-    needs: build
-    runs-on: ubuntu-latest
+    - name: Prepare release assets
+      shell: bash
+      run: |
+        set -euo pipefail
 
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
+        echo "Artifact tree:"
+        find artifacts -type f | sort
 
-      - name: Validate version
-        env:
-          GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ inputs.version }}
-        shell: bash
-        run: |
-          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "::error::Invalid version: $VERSION"
+        mkdir -p release-assets
+
+        # Ищем только сами бинарники лаунчера (без .pdb, .dll и прочего)
+        while IFS= read -r -d '' f; do
+          p="${f,,}"
+
+          # ОС (osx проверяем первым, т.к. "darwin" содержит "win")
+          case "$p" in
+            *osx*|*macos*|*darwin*) os="OSX" ;;
+            *linux*)                os="Linux" ;;
+            *win*)                  os="Windows" ;;
+            *)
+              echo "::warning::Unknown OS for $f, skipping"
+              continue
+              ;;
+          esac
+
+          # Архитектура
+          case "$p" in
+            *arm64*|*aarch64*) arch="ARM64" ;;
+            *arm*)             arch="ARM" ;;
+            *x64*|*amd64*)     arch="AMD64" ;;
+            *x86*)             arch="X86" ;;
+            *)
+              echo "::warning::Unknown arch for $f, skipping"
+              continue
+              ;;
+          esac
+
+          ext=""
+          [[ "$p" == *.exe ]] && ext=".exe"
+
+          name="Launcher_${os}.${arch}${ext}"
+
+          if [[ -e "release-assets/$name" ]]; then
+            echo "::error::Duplicate asset name: $name (from $f)"
             exit 1
           fi
 
-          if gh release view "$VERSION" >/dev/null 2>&1; then
-            echo "::error::Release $VERSION already exists"
-            exit 1
-          fi
+          cp "$f" "release-assets/$name"
+          echo "$f -> $name"
+        done < <(find artifacts -type f \( -name 'Gml.Launcher' -o -name 'Gml.Launcher.exe' \) -print0)
 
-      - name: Download Launcher-All
-        uses: actions/download-artifact@v4
-        with:
-          name: Launcher-All
-          path: artifacts
+        if [[ -z "$(ls -A release-assets)" ]]; then
+          echo "::error::No launcher binaries found"
+          exit 1
+        fi
 
-      - name: Prepare release assets
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p release-assets
+        echo "Release assets:"
+        ls -la release-assets
 
-          find artifacts -type f -name '*.exe' \
-            -exec cp --parents {} release-assets/ \;
+    - name: Create GitHub Release
+      env:
+        GH_TOKEN: ${{ github.token }}
+        VERSION: ${{ inputs.version }}
+        PRERELEASE: ${{ inputs.prerelease }}
+      shell: bash
+      run: |
+        set -euo pipefail
 
-          mapfile -d '' assets < <(
-            find release-assets -type f -name '*.exe' -print0
-          )
+        args=()
+        if [[ "$PRERELEASE" == "true" ]]; then
+          args+=(--prerelease)
+        fi
 
-          if [[ ${#assets[@]} -eq 0 ]]; then
-            echo "::error::No .exe files found"
-            find artifacts -maxdepth 5 -type f
-            exit 1
-          fi
+        # Создаём черновик сразу с файлами
+        gh release create "$VERSION" release-assets/* \
+          --draft \
+          --target "$GITHUB_SHA" \
+          --title "Gml.Launcher $VERSION" \
+          --generate-notes \
+          "${args[@]}"
 
-          echo "Found ${#assets[@]} executable(s):"
-          printf '%s\n' "${assets[@]}"
-
-      - name: Create GitHub Release
-        env:
-          GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ inputs.version }}
-          PRERELEASE: ${{ inputs.prerelease }}
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          args=()
-          if [[ "$PRERELEASE" == "true" ]]; then
-            args+=(--prerelease)
-          fi
-
-          gh release create "$VERSION" \
-            --target "$GITHUB_SHA" \
-            --title "Gml.Launcher $VERSION" \
-            --generate-notes \
-            "${args[@]}"
-
-      - name: Upload executable assets
-        env:
-          GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ inputs.version }}
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          mapfile -d '' assets < <(
-            find release-assets -type f -name '*.exe' -print0
-          )
-
-          gh release upload "$VERSION" "${assets[@]}"
+        # Публикуем, когда все файлы уже загружены
+        gh release edit "$VERSION" --draft=false
