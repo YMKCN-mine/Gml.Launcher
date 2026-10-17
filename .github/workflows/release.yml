@@ -1,116 +1,149 @@
-release:
-  name: Publish release
-  needs: build
-  runs-on: ubuntu-latest
 
-  steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
-      with:
-        fetch-depth: 0
+name: Release
 
-    - name: Validate version
-      env:
-        GH_TOKEN: ${{ github.token }}
-        VERSION: ${{ inputs.version }}
-      shell: bash
-      run: |
-        if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-          echo "::error::Invalid version: $VERSION"
-          exit 1
-        fi
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version (e.g. 1.0.0)"
+        required: true
+        type: string
+      prerelease:
+        description: "Pre-release"
+        required: true
+        type: boolean
+        default: false
 
-        if gh release view "$VERSION" >/dev/null 2>&1; then
-          echo "::error::Release $VERSION already exists"
-          exit 1
-        fi
+permissions:
+  contents: write
+  actions: write
 
-    - name: Download Launcher-All
-      uses: actions/download-artifact@v4
-      with:
-        name: Launcher-All
-        path: artifacts
+jobs:
+  build:
+    name: Build all platforms
+    uses: ./.github/workflows/ci.yml
+    with:
+      self_contained: true
+      build_arm: true
+      build_windows: true
+      build_linux: true
+      build_osx: true
+      publish_ready_to_run: true
+      hide_pdb: true
 
-    - name: Prepare release assets
-      shell: bash
-      run: |
-        set -euo pipefail
+  release:
+    name: Publish release
+    needs: build
+    runs-on: ubuntu-latest
 
-        echo "Artifact tree:"
-        find artifacts -type f | sort
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-        mkdir -p release-assets
-
-        # Ищем только сами бинарники лаунчера (без .pdb, .dll и прочего)
-        while IFS= read -r -d '' f; do
-          p="${f,,}"
-
-          # ОС (osx проверяем первым, т.к. "darwin" содержит "win")
-          case "$p" in
-            *osx*|*macos*|*darwin*) os="OSX" ;;
-            *linux*)                os="Linux" ;;
-            *win*)                  os="Windows" ;;
-            *)
-              echo "::warning::Unknown OS for $f, skipping"
-              continue
-              ;;
-          esac
-
-          # Архитектура
-          case "$p" in
-            *arm64*|*aarch64*) arch="ARM64" ;;
-            *arm*)             arch="ARM" ;;
-            *x64*|*amd64*)     arch="AMD64" ;;
-            *x86*)             arch="X86" ;;
-            *)
-              echo "::warning::Unknown arch for $f, skipping"
-              continue
-              ;;
-          esac
-
-          ext=""
-          [[ "$p" == *.exe ]] && ext=".exe"
-
-          name="Launcher_${os}.${arch}${ext}"
-
-          if [[ -e "release-assets/$name" ]]; then
-            echo "::error::Duplicate asset name: $name (from $f)"
+      - name: Validate version
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+        shell: bash
+        run: |
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Invalid version: $VERSION"
             exit 1
           fi
 
-          cp "$f" "release-assets/$name"
-          echo "$f -> $name"
-        done < <(find artifacts -type f \( -name 'Gml.Launcher' -o -name 'Gml.Launcher.exe' \) -print0)
+          if gh release view "$VERSION" >/dev/null 2>&1; then
+            echo "::error::Release $VERSION already exists"
+            exit 1
+          fi
 
-        if [[ -z "$(ls -A release-assets)" ]]; then
-          echo "::error::No launcher binaries found"
-          exit 1
-        fi
+      - name: Download Launcher-All
+        uses: actions/download-artifact@v4
+        with:
+          name: Launcher-All
+          path: artifacts
 
-        echo "Release assets:"
-        ls -la release-assets
+      - name: Prepare release assets
+        shell: bash
+        run: |
+          set -euo pipefail
 
-    - name: Create GitHub Release
-      env:
-        GH_TOKEN: ${{ github.token }}
-        VERSION: ${{ inputs.version }}
-        PRERELEASE: ${{ inputs.prerelease }}
-      shell: bash
-      run: |
-        set -euo pipefail
+          echo "Artifact tree:"
+          find artifacts -type f | sort
 
-        args=()
-        if [[ "$PRERELEASE" == "true" ]]; then
-          args+=(--prerelease)
-        fi
+          mkdir -p release-assets
 
-        # Создаём черновик сразу с файлами
-        gh release create "$VERSION" release-assets/* \
-          --draft \
-          --target "$GITHUB_SHA" \
-          --title "Gml.Launcher $VERSION" \
-          --generate-notes \
-          "${args[@]}"
+          # Ищем только сами бинарники лаунчера (без .pdb, .dll и прочего)
+          while IFS= read -r -d '' f; do
+            p="${f,,}"
 
-        # Публикуем, когда все файлы уже загружены
-        gh release edit "$VERSION" --draft=false
+            # ОС (osx проверяем первым, т.к. "darwin" содержит "win")
+            case "$p" in
+              *osx*|*macos*|*darwin*) os="OSX" ;;
+              *linux*)                os="Linux" ;;
+              *win*)                  os="Windows" ;;
+              *)
+                echo "::warning::Unknown OS for $f, skipping"
+                continue
+                ;;
+            esac
+
+            # Архитектура
+            case "$p" in
+              *arm64*|*aarch64*) arch="ARM64" ;;
+              *arm*)             arch="ARM" ;;
+              *x64*|*amd64*)     arch="AMD64" ;;
+              *x86*)             arch="X86" ;;
+              *)
+                echo "::warning::Unknown arch for $f, skipping"
+                continue
+                ;;
+            esac
+
+            ext=""
+            [[ "$p" == *.exe ]] && ext=".exe"
+
+            name="Launcher_${os}.${arch}${ext}"
+
+            if [[ -e "release-assets/$name" ]]; then
+              echo "::error::Duplicate asset name: $name (from $f)"
+              exit 1
+            fi
+
+            cp "$f" "release-assets/$name"
+            echo "$f -> $name"
+          done < <(find artifacts -type f \( -name 'Gml.Launcher' -o -name 'Gml.Launcher.exe' \) -print0)
+
+          if [[ -z "$(ls -A release-assets)" ]]; then
+            echo "::error::No launcher binaries found"
+            exit 1
+          fi
+
+          echo "Release assets:"
+          ls -la release-assets
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+          PRERELEASE: ${{ inputs.prerelease }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          args=()
+          if [[ "$PRERELEASE" == "true" ]]; then
+            args+=(--prerelease)
+          fi
+
+          # Создаём черновик сразу с файлами
+          gh release create "$VERSION" release-assets/* \
+            --draft \
+            --target "$GITHUB_SHA" \
+            --title "Gml.Launcher $VERSION" \
+            --generate-notes \
+            "${args[@]}"
+
+          # Публикуем, когда все файлы уже загружены
+          gh release edit "$VERSION" --draft=false
