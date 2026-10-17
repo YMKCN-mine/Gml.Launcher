@@ -70,9 +70,10 @@ jobs:
           BUILD_ARM="true"      # Enable ARM build       | Включить сборку под ARM
 
           # ======================================================================================
-          SELF_CONTAINED="false" # Publish self-contained | Публиковать как self-contained
+          SELF_CONTAINED="true" # Publish self-contained | Публиковать как self-contained
           # If enabled, the build will include all necessary .NET dependencies inside itself. (greatly increases size) Otherwise, prompt the user to install .NET from the MS site.
           # Если включено, сборка будет содержать все необходимые зависимости .NET внутри себя. (сильно увеличивает размер) Иначе предложить пользователю установить .NET с сайта MS.
+
 
           PUBLISH_READY_TO_RUN="true" # Publish ReadyToRun | Публиковать как ReadyToRun
           # If enabled, the build will be optimized for faster startup. (greatly increases size and build time)
