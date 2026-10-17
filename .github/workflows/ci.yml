@@ -40,6 +40,29 @@ on:
         required: true
         default: false
         type: boolean
+  workflow_call:
+    inputs:
+      self_contained:
+        required: true
+        type: boolean
+      build_arm:
+        required: true
+        type: boolean
+      build_windows:
+        required: true
+        type: boolean
+      build_linux:
+        required: true
+        type: boolean
+      build_osx:
+        required: true
+        type: boolean
+      publish_ready_to_run:
+        required: true
+        type: boolean
+      hide_pdb:
+        required: true
+        type: boolean
 
 permissions:
   contents: read

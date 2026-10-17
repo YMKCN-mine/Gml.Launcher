@@ -1,0 +1,88 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version gml_v2026.2-1.0.0"
+        required: true
+        type: string
+      prerelease:
+        description: "Pre-release"
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  build:
+    name: Build all platforms
+    uses: ./.github/workflows/ci.yml
+    with:
+      self_contained: true
+      build_arm: true
+      build_windows: true
+      build_linux: true
+      build_osx: true
+      publish_ready_to_run: true
+      hide_pdb: true
+
+  release:
+    name: Publish release
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Validate version
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "Invalid version: $VERSION"
+            exit 1
+          fi
+
+      - name: Download Launcher-All
+        uses: actions/download-artifact@v4
+        with:
+          name: Launcher-All
+          path: artifacts
+
+      - name: Package platform archives
+        run: |
+          mkdir -p release-assets
+
+          for dir in artifacts/*/; do
+            [ -d "$dir" ] || continue
+            rid=$(basename "$dir")
+            (
+              cd "$dir"
+              zip -r "$GITHUB_WORKSPACE/release-assets/Gml.Launcher-${rid}.zip" .
+            )
+          done
+
+          if ! compgen -G "release-assets/*.zip" > /dev/null; then
+            echo "No platform archives found"
+            exit 1
+          fi
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+          PRERELEASE: ${{ inputs.prerelease }}
+        run: |
+          args=()
+          if [[ "$PRERELEASE" == "true" ]]; then
+            args+=(--prerelease)
+          fi
+
+          gh release create "v$VERSION" \
+            release-assets/*.zip \
+            --target "$GITHUB_SHA" \
+            --title "Gml.Launcher v$VERSION" \
+            --generate-notes \
+            "${args[@]}"
