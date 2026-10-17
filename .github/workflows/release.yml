@@ -1,10 +1,11 @@
+
 name: Release
 
 on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Release version gml_v2026.2-1.0.0"
+        description: "Release version (e.g. gml_v2026.2-1.0.0)"
         required: true
         type: string
       prerelease:
@@ -30,7 +31,6 @@ jobs:
       publish_ready_to_run: true
       hide_pdb: true
 
-
   release:
     name: Publish release
     needs: build
@@ -46,8 +46,9 @@ jobs:
         env:
           VERSION: ${{ inputs.version }}
         run: |
-          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
-            echo "Invalid release version: $VERSION"
+          if [[ ! "$VERSION" =~ ^gml_v[0-9]+\.[0-9]+-[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Invalid version: $VERSION"
+            echo "Expected format: gml_v2026.2-1.0.0"
             exit 1
           fi
 
@@ -57,21 +58,16 @@ jobs:
           name: Launcher-All
           path: artifacts
 
-      - name: Package platform archives
+      - name: Prepare release assets
         run: |
           mkdir -p release-assets
 
-          for dir in artifacts/*/; do
-            [ -d "$dir" ] || continue
-            rid=$(basename "$dir")
-            (
-              cd "$dir"
-              zip -r "$GITHUB_WORKSPACE/release-assets/Gml.Launcher-${rid}.zip" .
-            )
-          done
+          find artifacts -type f -name '*.exe' \
+            -exec cp --parents {} release-assets/ \;
 
-          if ! compgen -G "release-assets/*.zip" > /dev/null; then
-            echo "No platform archives found"
+          if ! find release-assets -type f -name '*.exe' -print -quit | grep -q .; then
+            echo "No .exe files found in Launcher-All"
+            find artifacts -maxdepth 5 -type f
             exit 1
           fi
 
@@ -82,13 +78,18 @@ jobs:
           PRERELEASE: ${{ inputs.prerelease }}
         run: |
           args=()
+
           if [[ "$PRERELEASE" == "true" ]]; then
             args+=(--prerelease)
           fi
 
-          gh release create "v$VERSION" \
-            release-assets/*.zip \
+          mapfile -d '' assets < <(
+            find release-assets -type f -name '*.exe' -print0
+          )
+
+          gh release create "$VERSION" \
+            "${assets[@]}" \
             --target "$GITHUB_SHA" \
-            --title "Gml.Launcher v$VERSION" \
+            --title "Gml.Launcher $VERSION" \
             --generate-notes \
             "${args[@]}"
