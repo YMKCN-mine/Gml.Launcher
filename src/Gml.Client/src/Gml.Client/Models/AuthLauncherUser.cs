@@ -1,0 +1,16 @@
+﻿using System;
+using Gml.Client.Interfaces;
+
+namespace Gml.Client.Models;
+
+public class AuthLauncherUser : ILauncherUser
+{
+    public string Name { get; set; } = string.Empty;
+    public string AccessToken { get; set; } = string.Empty;
+    public string Uuid { get; set; } = string.Empty;
+    public DateTime ExpiredDate { get; set; }
+    public string TextureUrl { get; set; } = string.Empty;
+    public bool IsAuth { get; set; }
+    public bool Has2Fa { get; set; }
+    public bool IsNotExpired => ExpiredDate != DateTime.MinValue && ExpiredDate > DateTime.Now;
+}
