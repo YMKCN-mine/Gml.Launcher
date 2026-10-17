@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Release version (e.g. gml_v2026.2-1.0.0)"
+        description: "Release version (e.g. 1.0.0)"
         required: true
         type: string
       prerelease:
@@ -42,6 +42,25 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Validate version
+        env:
+          VERSION: ${{ inputs.version }}
+        shell: bash
+        run: |
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Invalid version: $VERSION"
+            echo "Expected format: 1.0.0"
+            exit 1
+          fi
+
+          if gh release view "$VERSION" >/dev/null 2>&1; then
+            echo "::error::Release $VERSION already exists"
+            exit 1
+          fi
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+
       - name: Download Launcher-All
         uses: actions/download-artifact@v4
         with:
@@ -49,37 +68,57 @@ jobs:
           path: artifacts
 
       - name: Prepare release assets
+        shell: bash
         run: |
+          set -euo pipefail
           mkdir -p release-assets
 
           find artifacts -type f -name '*.exe' \
             -exec cp --parents {} release-assets/ \;
 
-          if ! find release-assets -type f -name '*.exe' -print -quit | grep -q .; then
-            echo "No .exe files found in Launcher-All"
+          mapfile -d '' assets < <(
+            find release-assets -type f -name '*.exe' -print0
+          )
+
+          if [[ ${#assets[@]} -eq 0 ]]; then
+            echo "::error::No .exe files found"
             find artifacts -maxdepth 5 -type f
             exit 1
           fi
 
-      - name: Publish GitHub Release
+          echo "Found ${#assets[@]} executable(s):"
+          printf '%s\n' "${assets[@]}"
+
+      - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ inputs.version }}
           PRERELEASE: ${{ inputs.prerelease }}
+        shell: bash
         run: |
-          args=()
+          set -euo pipefail
 
+          args=()
           if [[ "$PRERELEASE" == "true" ]]; then
             args+=(--prerelease)
           fi
+
+          gh release create "$VERSION" \
+            --target "$GITHUB_SHA" \
+            --title "Gml.Launcher $VERSION" \
+            --generate-notes \
+            "${args[@]}"
+
+      - name: Upload executable assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
 
           mapfile -d '' assets < <(
             find release-assets -type f -name '*.exe' -print0
           )
 
-          gh release create "$VERSION" \
-            "${assets[@]}" \
-            --target "$GITHUB_SHA" \
-            --title "Gml.Launcher $VERSION" \
-            --generate-notes \
-            "${args[@]}"
+          gh release upload "$VERSION" "${assets[@]}"
